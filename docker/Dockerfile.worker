@@ -1,0 +1,41 @@
+# GPU-enabled worker image running Real-ESRGAN via arq.
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Python + libs required by opencv / basicsr.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3-pip \
+        libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
+    python -m pip install --no-cache-dir --upgrade pip
+
+COPY requirements.txt requirements-worker.txt ./
+# Install torch with CUDA wheels, then the rest of the stack.
+RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
+        --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements-worker.txt
+
+COPY upscale_api ./upscale_api
+
+# basicsr imports a deprecated torchvision symbol on some versions; patch it.
+RUN python - <<'PY'
+import importlib.util, pathlib
+spec = importlib.util.find_spec("basicsr.data.degradations")
+if spec and spec.origin:
+    p = pathlib.Path(spec.origin)
+    text = p.read_text()
+    text = text.replace(
+        "from torchvision.transforms.functional_tensor import rgb_to_grayscale",
+        "from torchvision.transforms.functional import rgb_to_grayscale",
+    )
+    p.write_text(text)
+PY
+
+CMD ["arq", "upscale_api.worker.WorkerSettings"]

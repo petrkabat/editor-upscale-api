@@ -1,0 +1,59 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_HOST: redis
+      DATA_DIR: /data
+      DATABASE_PATH: /data/jobs.db
+      OUTPUT_DIR: /data/outputs
+      WEIGHTS_DIR: /data/weights
+    volumes:
+      - app-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    # Run multiple worker instances: docker compose up --scale worker=3
+    environment:
+      REDIS_HOST: redis
+      DATA_DIR: /data
+      DATABASE_PATH: /data/jobs.db
+      OUTPUT_DIR: /data/outputs
+      WEIGHTS_DIR: /data/weights
+      USE_GPU: "true"
+    volumes:
+      - app-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  app-data:
