@@ -55,5 +55,31 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Ephemeral public URL (no Cloudflare account needed), prints a
+  # *.trycloudflare.com address. Start with:
+  #   docker compose --profile tunnel-quick up -d
+  #   docker compose logs -f cloudflared-quick   # find the URL
+  cloudflared-quick:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://api:8000
+    depends_on:
+      - api
+    profiles: ["tunnel-quick"]
+
+  # Persistent named tunnel bound to your own domain. Create the tunnel in the
+  # Cloudflare Zero Trust dashboard, set its public hostname to http://api:8000,
+  # put the token in .env (CLOUDFLARE_TUNNEL_TOKEN), then start with:
+  #   docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - api
+    profiles: ["tunnel"]
+
 volumes:
   app-data:

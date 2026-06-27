@@ -1,4 +1,4 @@
-.PHONY: help install dev test run-api run-worker up down logs build clean
+.PHONY: help install dev test run-api run-worker up up-scale down logs build clean tunnel tunnel-quick tunnel-url
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -33,6 +33,15 @@ down: ## Stop the stack
 
 logs: ## Tail service logs
 	docker compose logs -f
+
+tunnel-quick: ## Expose the API via an ephemeral Cloudflare quick tunnel
+	docker compose --profile tunnel-quick up -d cloudflared-quick
+
+tunnel-url: ## Print the current *.trycloudflare.com URL
+	@docker compose logs cloudflared-quick 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || echo "no quick tunnel running"
+
+tunnel: ## Run the named Cloudflare tunnel (needs CLOUDFLARE_TUNNEL_TOKEN)
+	docker compose --profile tunnel up -d cloudflared
 
 clean: ## Remove local data and caches
 	rm -rf data .pytest_cache __pycache__ */__pycache__

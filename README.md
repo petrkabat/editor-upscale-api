@@ -78,9 +78,75 @@ Response (`202 Accepted`):
 Returns the upscaled image bytes with the correct `Content-Type`.
 Returns `409` if the result is not ready and `404`/`410` if it is missing.
 
+## Prerequisites (Linux + NVIDIA GPU)
+
+The GPU worker runs on a **Linux host with an NVIDIA GPU** (a recent driver,
+Docker Engine, and the NVIDIA Container Toolkit). macOS/Windows have no NVIDIA
+GPU passthrough — for those, see [Local development](#local-development) and run
+the worker on CPU.
+
+### 1. NVIDIA driver
+
+Make sure a driver is installed and `nvidia-smi` works:
+
+```bash
+nvidia-smi
+```
+
+If not, install it (Ubuntu/Debian):
+
+```bash
+sudo ubuntu-drivers autoinstall   # or: sudo apt install -y nvidia-driver-550
+sudo reboot
+```
+
+### 2. Docker Engine + Compose plugin
+
+```bash
+# Official convenience script (Ubuntu/Debian/most distros)
+curl -fsSL https://get.docker.com | sudo sh
+
+# Run docker without sudo (log out/in afterwards)
+sudo usermod -aG docker "$USER"
+
+# Verify (Compose v2 ships as the `docker compose` plugin)
+docker --version
+docker compose version
+```
+
+### 3. NVIDIA Container Toolkit
+
+This lets containers use the GPU. On Ubuntu/Debian:
+
+```bash
+# Add the NVIDIA repository
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Install and wire it into Docker
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Other distros (RHEL/Fedora/SUSE) and details:
+<https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>
+
+### 4. Verify GPU access from a container
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+```
+
+If that prints your GPU, the stack below will work.
+
 ## Run with Docker Compose (GPU)
 
-Requires Docker, the NVIDIA Container Toolkit, and an NVIDIA GPU on the host.
+Requires the prerequisites above (Docker, NVIDIA Container Toolkit, NVIDIA GPU).
 
 ```bash
 cp .env.example .env        # optional
@@ -110,6 +176,38 @@ curl -s http://localhost:8000/api/jobs/<job_id>
 # Download the result once status == "succeeded"
 curl -s http://localhost:8000/api/jobs/<job_id>/result -o out.png
 ```
+
+## Expose publicly with Cloudflare Tunnel
+
+Two optional `cloudflared` services are wired up behind Compose profiles, so
+neither starts unless you ask for it.
+
+### Quick tunnel (no account, throwaway URL)
+
+```bash
+make up                       # API must be running first
+make tunnel-quick             # starts cloudflared-quick
+make tunnel-url               # prints the https://<random>.trycloudflare.com URL
+```
+
+The public URL serves the API directly, e.g.
+`https://<random>.trycloudflare.com/api/health`.
+
+### Named tunnel (your own domain, persistent)
+
+1. In the Cloudflare **Zero Trust → Networks → Tunnels** dashboard create a
+   tunnel and add a public hostname (e.g. `upscale.example.com`) routed to
+   `http://api:8000`.
+2. Copy the tunnel **token** into `.env`:
+   ```env
+   CLOUDFLARE_TUNNEL_TOKEN=eyJh...
+   ```
+3. Start it:
+   ```bash
+   make tunnel                 # docker compose --profile tunnel up -d cloudflared
+   ```
+
+Both services share the Compose network, so they reach the API at `api:8000`.
 
 ## Local development
 
