@@ -24,18 +24,10 @@ RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
 
 COPY upscale_api ./upscale_api
 
-# basicsr imports a deprecated torchvision symbol on some versions; patch it.
-RUN python - <<'PY'
-import importlib.util, pathlib
-spec = importlib.util.find_spec("basicsr.data.degradations")
-if spec and spec.origin:
-    p = pathlib.Path(spec.origin)
-    text = p.read_text()
-    text = text.replace(
-        "from torchvision.transforms.functional_tensor import rgb_to_grayscale",
-        "from torchvision.transforms.functional import rgb_to_grayscale",
-    )
-    p.write_text(text)
-PY
+# torchvision >= 0.17 removed `functional_tensor`, which basicsr 1.4.2 still
+# imports. Patch the file in place with sed (importing basicsr to patch it would
+# itself trigger the broken import).
+RUN find /usr -path '*/basicsr/data/degradations.py' -exec \
+        sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' {} +
 
 CMD ["arq", "upscale_api.worker.WorkerSettings"]
