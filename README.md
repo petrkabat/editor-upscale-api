@@ -250,6 +250,29 @@ make dev
 make test
 ```
 
+## Benchmarking
+
+`scripts/benchmark.py` submits N jobs, waits for them all to finish, and reports
+throughput. The headline metric is **effective seconds per image**
+(`wall_clock / N`) — that's what drops as you add workers/GPUs. Wall clock is
+derived from server timestamps, so it's independent of the poll interval.
+
+```bash
+# against a running stack (uses BASE_URL / API_TOKEN env if set)
+make bench COUNT=100 LABEL="1 worker" CSV=bench.csv
+
+# scale up, run again, compare
+docker compose up -d --scale worker=2
+make bench COUNT=100 LABEL="2 workers" CSV=bench.csv
+```
+
+Each run appends a row to the CSV (label, wall, throughput, sec/image) so you
+can compare worker counts, GPUs and configs over time. Full options:
+`python scripts/benchmark.py --help`.
+
+> Per-job latency in the output includes queue wait, so it grows with backlog —
+> use **throughput / effective per image** to judge parallelism, not latency.
+
 ## Project layout
 
 ```
@@ -264,6 +287,7 @@ upscale_api/
   urls.py       Result URL helper (absolute when PUBLIC_BASE_URL is set)
   config.py     Settings (env-driven)
 tests/          pytest API tests
+scripts/        test_upscale.sh (smoke test), benchmark.py (throughput)
 docker/         API + GPU worker Dockerfiles
 docker-compose.yml
 Makefile

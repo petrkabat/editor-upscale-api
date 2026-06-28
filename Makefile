@@ -1,4 +1,4 @@
-.PHONY: help install dev test run-api run-worker up up-scale down logs build clean tunnel tunnel-quick tunnel-url
+.PHONY: help install dev test run-api run-worker up up-scale down logs build clean tunnel tunnel-quick tunnel-url bench
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -12,6 +12,12 @@ dev: ## Install dev/test dependencies
 
 test: ## Run the test suite
 	pytest
+
+bench: ## Throughput benchmark (vars: COUNT, BASE_URL, API_TOKEN, LABEL, CSV)
+	python scripts/benchmark.py \
+		--count $(or $(COUNT),100) \
+		$(if $(LABEL),--label "$(LABEL)") \
+		$(if $(CSV),--csv $(CSV))
 
 run-api: ## Run the API locally (needs a local Redis)
 	REDIS_HOST=localhost uvicorn upscale_api.api:app --reload --port 8000
