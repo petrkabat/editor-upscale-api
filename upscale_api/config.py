@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     download_timeout_seconds: int = Field(default=60)
     max_image_bytes: int = Field(default=50 * 1024 * 1024)
 
+    # Cleanup
+    # Delete the downloaded input image once a job finishes.
+    delete_input_after: bool = Field(default=True)
+    # Remove finished jobs (DB rows + result files) older than this. 0 disables.
+    result_ttl_hours: int = Field(default=24)
+
     def ensure_dirs(self) -> None:
         """Create the directories the app writes to."""
         self.data_dir.mkdir(parents=True, exist_ok=True)

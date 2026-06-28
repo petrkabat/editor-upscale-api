@@ -131,3 +131,26 @@ class Database:
                 (status.value, result_path, error, _now(), job_id),
             )
             await conn.commit()
+
+    async def delete_finished_before(self, cutoff: datetime) -> list[Job]:
+        """Delete finished (succeeded/failed) jobs updated before `cutoff`.
+
+        Returns the deleted rows so the caller can remove their files.
+        """
+        cutoff_iso = cutoff.isoformat()
+        async with self.connect() as conn:
+            async with conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status IN (?, ?) AND updated_at < ?
+                """,
+                (JobStatus.succeeded.value, JobStatus.failed.value, cutoff_iso),
+            ) as cur:
+                rows = await cur.fetchall()
+            jobs = [_row_to_job(row) for row in rows]
+            if jobs:
+                await conn.executemany(
+                    "DELETE FROM jobs WHERE id = ?", [(job.id,) for job in jobs]
+                )
+                await conn.commit()
+        return jobs

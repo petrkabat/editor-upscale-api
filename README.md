@@ -266,4 +266,16 @@ All settings are environment variables (see `.env.example`). Key ones:
 | `USE_GPU` | `true` | Use CUDA + fp16 in the worker |
 | `TILE_SIZE` | `0` | Tile size for low-VRAM inference (0 = off) |
 | `MAX_IMAGE_BYTES` | `52428800` | Reject inputs larger than this |
-```
+| `DELETE_INPUT_AFTER` | `true` | Delete the downloaded input once a job finishes |
+| `RESULT_TTL_HOURS` | `24` | Auto-remove finished jobs + results after N hours (0 = keep forever) |
+
+## Cleanup
+
+The worker keeps storage bounded automatically:
+
+- **Inputs** are deleted as soon as a job finishes (`DELETE_INPUT_AFTER`).
+- **Results + job rows** older than `RESULT_TTL_HOURS` are removed by an
+  hourly cleanup task. It runs as a built-in **arq cron job inside the worker**
+  (no extra container or system cron needed) and is coordinated via Redis, so it
+  runs once even when multiple workers are scaled up. Set `RESULT_TTL_HOURS=0`
+  to disable and keep everything.

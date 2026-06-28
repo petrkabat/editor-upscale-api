@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+from arq import cron
 
 from .config import Settings, get_settings
 from .db import Database
-from .queue import UPSCALE_TASK, redis_settings
+from .queue import redis_settings
 from .schemas import JobStatus
+
+logger = logging.getLogger("upscale_api.worker")
 
 
 async def _download_image(url: str, dest: Path, settings: Settings) -> None:
@@ -40,10 +45,9 @@ async def run_upscale(ctx: dict[str, Any], job_id: str) -> str:
         return JobStatus.failed.value
 
     await db.update_status(job_id, JobStatus.processing)
+    input_path = settings.data_dir / "inputs" / f"{job_id}{_ext(job.image_url)}"
+    output_path = settings.output_dir / f"{job_id}.png"
     try:
-        input_path = settings.data_dir / "inputs" / f"{job_id}{_ext(job.image_url)}"
-        output_path = settings.output_dir / f"{job_id}.png"
-
         await _download_image(job.image_url, input_path, settings)
 
         # Run the (blocking, CPU/GPU-bound) inference off the event loop.
@@ -65,6 +69,36 @@ async def run_upscale(ctx: dict[str, Any], job_id: str) -> str:
     except Exception as exc:  # noqa: BLE001 - record any failure on the job
         await db.update_status(job_id, JobStatus.failed, error=str(exc))
         return JobStatus.failed.value
+    finally:
+        # The downloaded input is only needed during inference.
+        if settings.delete_input_after:
+            input_path.unlink(missing_ok=True)
+
+
+async def cleanup_old_results(ctx: dict[str, Any]) -> int:
+    """Cron task: remove finished jobs (rows + result files) past the TTL.
+
+    Coordinated by arq across worker instances, so it runs once per tick.
+    Returns the number of jobs removed.
+    """
+    db: Database = ctx["db"]
+    settings: Settings = ctx["settings"]
+    if settings.result_ttl_hours <= 0:
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.result_ttl_hours)
+    jobs = await db.delete_finished_before(cutoff)
+    for job in jobs:
+        if job.result_path:
+            Path(job.result_path).unlink(missing_ok=True)
+        # Remove any stray input that was kept (delete_input_after disabled).
+        for leftover in (settings.data_dir / "inputs").glob(f"{job.id}.*"):
+            leftover.unlink(missing_ok=True)
+
+    if jobs:
+        logger.info("cleanup removed %d finished job(s) older than %s",
+                    len(jobs), cutoff.isoformat())
+    return len(jobs)
 
 
 def _ext(url: str) -> str:
@@ -85,6 +119,8 @@ class WorkerSettings:
     """arq worker configuration. Run with: arq upscale_api.worker.WorkerSettings"""
 
     functions = [run_upscale]
+    # Run cleanup at the top of every hour (arq dedupes across instances).
+    cron_jobs = [cron(cleanup_old_results, minute=0)]
     on_startup = startup
     redis_settings = redis_settings(get_settings())
     max_jobs = 1  # one GPU job at a time per worker instance
