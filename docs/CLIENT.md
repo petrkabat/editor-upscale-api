@@ -6,8 +6,9 @@ How to talk to the Real-ESRGAN Upscale API from your own app.
   under `/api`.
 - **Content type:** JSON requests/responses, except the result image which is
   raw bytes.
-- **Auth:** none on the API itself (put it behind your own gateway/tunnel if
-  needed).
+- **Auth:** optional bearer token. If the server has `API_TOKEN` set, send
+  `Authorization: Bearer <token>` on every `/api` call except `/api/health`;
+  otherwise the API is open. A missing/invalid token returns `401`.
 
 ## How it works (lifecycle)
 
@@ -120,27 +121,33 @@ Responses:
 
 ## Example clients
 
+> If the server requires auth, add `Authorization: Bearer <token>` to every
+> request (shown below; drop it if the API is open).
+
 ### curl (polling)
 
 ```bash
 BASE=https://upscale.fotokalendare.cz
+TOKEN=your-api-token   # omit the -H lines below if the API is open
 
 # 1) submit
 ID=$(curl -s -X POST "$BASE/api/upscale" \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"image_url":"https://example.com/photo.jpg","scale":4,"model":"realesrgan-x4plus"}' \
   | sed -E 's/.*"id":"([^"]+)".*/\1/')
 
 # 2) poll until done
 while :; do
-  S=$(curl -s "$BASE/api/jobs/$ID" | sed -E 's/.*"status":"([^"]+)".*/\1/')
+  S=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/jobs/$ID" \
+    | sed -E 's/.*"status":"([^"]+)".*/\1/')
   [ "$S" = succeeded ] && break
-  [ "$S" = failed ] && { echo "failed"; curl -s "$BASE/api/jobs/$ID"; exit 1; }
+  [ "$S" = failed ] && { echo "failed"; exit 1; }
   sleep 2
 done
 
 # 3) download
-curl -s "$BASE/api/jobs/$ID/result" -o out.png
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/jobs/$ID/result" -o out.png
 ```
 
 ### Python (polling)
@@ -149,9 +156,11 @@ curl -s "$BASE/api/jobs/$ID/result" -o out.png
 import time, httpx
 
 BASE = "https://upscale.fotokalendare.cz"
+TOKEN = "your-api-token"  # set to None if the API is open
 
 def upscale(image_url: str, scale: int = 4, model: str = "realesrgan-x4plus") -> bytes:
-    with httpx.Client(base_url=BASE, timeout=30) as c:
+    headers = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
+    with httpx.Client(base_url=BASE, timeout=30, headers=headers) as c:
         job = c.post("/api/upscale", json={
             "image_url": image_url, "scale": scale, "model": model,
         }).raise_for_status().json()
@@ -176,16 +185,21 @@ open("out.png", "wb").write(upscale("https://example.com/photo.jpg"))
 const BASE = "https://upscale.fotokalendare.cz";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const TOKEN = "your-api-token"; // set to "" if the API is open
+const headers: Record<string, string> = TOKEN
+  ? { Authorization: `Bearer ${TOKEN}` }
+  : {};
+
 async function upscale(imageUrl: string, scale = 4, model = "realesrgan-x4plus") {
   const submit = await fetch(`${BASE}/api/upscale`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify({ image_url: imageUrl, scale, model }),
   });
   const { id } = await submit.json();
 
   while (true) {
-    const job = await (await fetch(`${BASE}/api/jobs/${id}`)).json();
+    const job = await (await fetch(`${BASE}/api/jobs/${id}`, { headers })).json();
     if (job.status === "succeeded") return job.result; // URL of the image
     if (job.status === "failed") throw new Error(job.error);
     await sleep(2000);

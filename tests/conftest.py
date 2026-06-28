@@ -42,3 +42,24 @@ def client(
     app = api.create_app(settings)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def auth_token() -> str:
+    return "secret-token-123"
+
+
+@pytest.fixture
+def auth_client(
+    settings: Settings,
+    fake_pool: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_token: str,
+) -> Iterator[TestClient]:
+    """A client whose app requires `Authorization: Bearer <auth_token>`."""
+    settings.api_token = auth_token
+    monkeypatch.setattr(api, "create_redis_pool", AsyncMock(return_value=fake_pool))
+
+    app = api.create_app(settings)
+    with TestClient(app) as test_client:
+        yield test_client

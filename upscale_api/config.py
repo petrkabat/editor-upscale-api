@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # result as an absolute URL. Empty => relative "/api/jobs/.../result".
     public_base_url: str = Field(default="")
 
+    # API authentication (WaveSpeed-style). When set, every /api endpoint
+    # (except /api/health) requires `Authorization: Bearer <api_token>`.
+    # Empty => authentication disabled (open API).
+    api_token: str = Field(default="")
+
     def ensure_dirs(self) -> None:
         """Create the directories the app writes to."""
         self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -32,6 +32,18 @@ client ──POST /api/upscale──▶ API ──┐
 
 Base path: `/api`
 
+### Authentication
+
+Optional, off by default. Set `API_TOKEN` to require a bearer token on every
+`/api` endpoint **except** `/api/health`:
+
+```
+Authorization: Bearer <API_TOKEN>
+```
+
+Missing/invalid token returns `401 Unauthorized`. Leave `API_TOKEN` empty to
+keep the API open.
+
 ### `POST /api/upscale`
 
 Request:
@@ -273,6 +285,7 @@ All settings are environment variables (see `.env.example`). Key ones:
 | `DELETE_INPUT_AFTER` | `true` | Delete the downloaded input once a job finishes |
 | `RESULT_TTL_HOURS` | `24` | Auto-remove finished jobs + results after N hours (0 = keep forever) |
 | `PUBLIC_BASE_URL` | `` | Base URL so `result` is returned as an absolute URL |
+| `API_TOKEN` | `` | Require `Authorization: Bearer <token>` on `/api` (empty = open) |
 
 ## Cleanup
 

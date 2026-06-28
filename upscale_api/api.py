@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hmac
 import mimetypes
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
@@ -51,6 +52,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_db() -> Database:
         return app.state.db
 
+    def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
+        """Require `Authorization: Bearer <api_token>` when a token is set."""
+        if not settings.api_token:
+            return  # authentication disabled
+        expected = f"Bearer {settings.api_token}"
+        if authorization is None or not hmac.compare_digest(authorization, expected):
+            raise HTTPException(
+                status_code=401,
+                detail="invalid or missing API token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     def to_response(job: Job, queue_position: int | None = None) -> JobResponse:
         return JobResponse(
             id=job.id,
@@ -71,7 +84,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/api/upscale", response_model=UpscaleAccepted, status_code=202)
+    @app.post(
+        "/api/upscale",
+        response_model=UpscaleAccepted,
+        status_code=202,
+        dependencies=[Depends(require_auth)],
+    )
     async def upscale(
         payload: UpscaleRequest,
         request: Request,
@@ -87,7 +105,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await enqueue_upscale(request.app.state.redis_pool, job_id)
         return UpscaleAccepted(id=job_id, status=JobStatus.queued)
 
-    @app.get("/api/jobs/{job_id}", response_model=JobResponse)
+    @app.get(
+        "/api/jobs/{job_id}",
+        response_model=JobResponse,
+        dependencies=[Depends(require_auth)],
+    )
     async def get_job(
         job_id: str, db: Database = Depends(get_db)
     ) -> JobResponse:
@@ -101,7 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return to_response(job, queue_position=position)
 
-    @app.get("/api/jobs/{job_id}/result")
+    @app.get("/api/jobs/{job_id}/result", dependencies=[Depends(require_auth)])
     async def get_result(
         job_id: str, db: Database = Depends(get_db)
     ) -> FileResponse:

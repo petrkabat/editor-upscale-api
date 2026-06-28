@@ -23,6 +23,9 @@ services:
       DATABASE_PATH: /data/jobs.db
       OUTPUT_DIR: /data/outputs
       WEIGHTS_DIR: /data/weights
+      # Auth + absolute result URLs; pulled from host env / .env (empty if unset).
+      API_TOKEN: ${API_TOKEN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - app-data:/data
     depends_on:
