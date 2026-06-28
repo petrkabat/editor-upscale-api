@@ -26,6 +26,9 @@ class UpscaleRequest(BaseModel):
     image_url: HttpUrl
     scale: int = Field(default=4)
     model: str = Field(default="realesrgan-x4plus")
+    # Optional per-request callback. When set, the worker POSTs the finished job
+    # (succeeded or failed) to this URL, signed like a WaveSpeed webhook.
+    webhook_url: Optional[HttpUrl] = None
 
     @field_validator("scale")
     @classmethod
@@ -65,3 +68,17 @@ class JobResponse(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class WebhookPayload(BaseModel):
+    """Body POSTed to a job's webhook_url when it finishes."""
+
+    id: str
+    status: JobStatus
+    model: str
+    scale: int
+    image_url: str
+    # Absolute when PUBLIC_BASE_URL is set, otherwise a relative API path.
+    result: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime

@@ -42,6 +42,9 @@ services:
       OUTPUT_DIR: /data/outputs
       WEIGHTS_DIR: /data/weights
       USE_GPU: "true"
+      # Webhooks: pulled from the host env / .env (empty if unset).
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - app-data:/data
     depends_on:

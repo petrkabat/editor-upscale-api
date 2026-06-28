@@ -69,6 +69,37 @@ def test_upscale_rejects_invalid_url(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_upscale_accepts_webhook_url(
+    client: TestClient, settings: Settings
+) -> None:
+    resp = client.post(
+        "/api/upscale",
+        json={
+            "image_url": "https://example.com/image.jpg",
+            "webhook_url": "https://client.example.com/hook",
+        },
+    )
+    assert resp.status_code == 202
+    job_id = resp.json()["id"]
+
+    import asyncio
+
+    from upscale_api.db import Database
+
+    async def fetch() -> str | None:
+        return (await Database(settings).get_job(job_id)).webhook_url
+
+    assert asyncio.run(fetch()) == "https://client.example.com/hook"
+
+
+def test_upscale_rejects_invalid_webhook_url(client: TestClient) -> None:
+    resp = client.post(
+        "/api/upscale",
+        json={"image_url": "https://example.com/image.jpg", "webhook_url": "nope"},
+    )
+    assert resp.status_code == 422
+
+
 def test_get_job_returns_queued(client: TestClient) -> None:
     create = client.post(
         "/api/upscale", json={"image_url": "https://example.com/image.jpg"}

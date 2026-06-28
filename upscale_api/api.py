@@ -84,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_url=str(payload.image_url),
             scale=payload.scale,
             model=payload.model,
+            webhook_url=str(payload.webhook_url) if payload.webhook_url else None,
         )
         await enqueue_upscale(request.app.state.redis_pool, job_id)
         return UpscaleAccepted(id=job_id, status=JobStatus.queued)

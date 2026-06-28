@@ -40,13 +40,16 @@ Request:
 {
   "image_url": "https://example.com/image.jpg",
   "scale": 4,
-  "model": "realesrgan-x4plus"
+  "model": "realesrgan-x4plus",
+  "webhook_url": "https://your-app.example.com/hooks/upscale"
 }
 ```
 
 - `scale` — one of `2`, `3`, `4` (default `4`)
 - `model` — one of `realesrgan-x4plus`, `realesrnet-x4plus`,
   `realesrgan-x4plus-anime`, `realesr-general-x4v3` (default `realesrgan-x4plus`)
+- `webhook_url` — optional; when set, the finished job is POSTed here
+  (see [Webhooks](#webhooks))
 
 Response (`202 Accepted`):
 
@@ -240,8 +243,9 @@ make test
 ```
 upscale_api/
   api.py        FastAPI app + endpoints (/api)
-  worker.py     arq worker: download → Real-ESRGAN → save → update status
+  worker.py     arq worker: download → Real-ESRGAN → save → update status → webhook
   upscaler.py   Real-ESRGAN inference wrapper (lazy ML imports)
+  webhooks.py   Signed webhook delivery (Standard Webhooks / WaveSpeed scheme)
   db.py         SQLite job store (aiosqlite, WAL)
   queue.py      arq / Redis helpers
   schemas.py    Pydantic request/response models + JobStatus
@@ -268,6 +272,64 @@ All settings are environment variables (see `.env.example`). Key ones:
 | `MAX_IMAGE_BYTES` | `52428800` | Reject inputs larger than this |
 | `DELETE_INPUT_AFTER` | `true` | Delete the downloaded input once a job finishes |
 | `RESULT_TTL_HOURS` | `24` | Auto-remove finished jobs + results after N hours (0 = keep forever) |
+| `WEBHOOK_SECRET` | `` | HMAC key for signing webhooks (empty = unsigned) |
+| `WEBHOOK_TIMEOUT_SECONDS` | `10` | Per-attempt webhook HTTP timeout |
+| `WEBHOOK_MAX_RETRIES` | `3` | Webhook delivery attempts before giving up |
+| `PUBLIC_BASE_URL` | `` | Base URL for absolute `result` links in webhooks |
+
+## Webhooks
+
+Instead of polling, pass a `webhook_url` per request. When the job finishes
+(succeeded **or** failed) the worker POSTs the result to that URL. Delivery is
+best-effort with retries and never fails the job.
+
+The payload mirrors `GET /api/jobs/{id}`:
+
+```json
+{
+  "id": "9f1c...",
+  "status": "succeeded",
+  "model": "realesrgan-x4plus",
+  "scale": 4,
+  "image_url": "https://example.com/image.jpg",
+  "result": "https://upscale.example.com/api/jobs/9f1c.../result",
+  "error": null,
+  "created_at": "..."
+}
+```
+
+`result` is absolute when `PUBLIC_BASE_URL` is set, otherwise a relative path.
+
+### Signature verification
+
+Following the [Standard Webhooks](https://www.standardwebhooks.com/) scheme
+(same as WaveSpeed), each delivery carries three headers:
+
+| Header | Meaning |
+| --- | --- |
+| `webhook-id` | unique id of this delivery |
+| `webhook-timestamp` | unix seconds when sent |
+| `webhook-signature` | `v1,<base64(HMAC_SHA256)>` |
+
+The signature is `HMAC_SHA256(key, "{webhook-id}.{webhook-timestamp}.{body}")`,
+where `key` is `WEBHOOK_SECRET` with any `whsec_` prefix stripped (used as-is,
+not base64-decoded). Verify on the receiver:
+
+```python
+import base64, hashlib, hmac, time
+
+def verify(secret, headers, body: bytes) -> bool:
+    wid, ts, sig = headers["webhook-id"], headers["webhook-timestamp"], headers["webhook-signature"]
+    if abs(time.time() - int(ts)) > 300:          # reject stale (>5 min)
+        return False
+    key = secret.removeprefix("whsec_").encode()
+    expected = "v1," + base64.b64encode(
+        hmac.new(key, f"{wid}.{ts}.".encode() + body, hashlib.sha256).digest()
+    ).decode()
+    return any(hmac.compare_digest(s, expected) for s in sig.split())
+```
+
+Set the secret via `WEBHOOK_SECRET` (leave empty to send unsigned webhooks).
 
 ## Cleanup
 
