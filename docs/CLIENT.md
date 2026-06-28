@@ -1,0 +1,257 @@
+# Client integration guide
+
+How to talk to the Real-ESRGAN Upscale API from your own app.
+
+- **Base URL:** `https://upscale.fotokalendare.cz` (prod) — all paths below are
+  under `/api`.
+- **Content type:** JSON requests/responses, except the result image which is
+  raw bytes.
+- **Auth:** none on the API itself (put it behind your own gateway/tunnel if
+  needed). Webhooks are signed (see below).
+
+## How it works (lifecycle)
+
+```
+POST /api/upscale  ──▶  job created, status "queued"  ──▶  returns { id }
+                                     │
+                          worker picks it up
+                                     ▼
+                              status "processing"
+                                     ▼
+                    ┌──────────────────────────────┐
+                    ▼                                ▼
+              "succeeded"                        "failed"
+        result image available              error message set
+                    │                                │
+                    └──────── optional webhook ──────┘
+```
+
+A job moves through these `status` values:
+
+| status | meaning |
+| --- | --- |
+| `queued` | accepted, waiting for a worker |
+| `processing` | worker is downloading + upscaling |
+| `succeeded` | done, result image is ready |
+| `failed` | something went wrong, see `error` |
+
+Two ways to get the result:
+
+1. **Poll** `GET /api/jobs/{id}` until `status` is `succeeded`/`failed`.
+2. **Webhook** — pass `webhook_url` and get POSTed when it finishes (no polling).
+
+---
+
+## Endpoints
+
+### `POST /api/upscale` — submit a job
+
+Request body:
+
+| field | type | required | default | notes |
+| --- | --- | --- | --- | --- |
+| `image_url` | string (URL) | yes | — | publicly reachable source image |
+| `scale` | int | no | `4` | one of `2`, `3`, `4` |
+| `model` | string | no | `realesrgan-x4plus` | see model list below |
+| `webhook_url` | string (URL) | no | — | called when the job finishes |
+
+```jsonc
+// request
+{
+  "image_url": "https://example.com/photo.jpg",
+  "scale": 4,
+  "model": "realesrgan-x4plus",
+  "webhook_url": "https://your-app.example.com/hooks/upscale"  // optional
+}
+```
+
+Responses:
+
+- `202 Accepted`
+  ```json
+  { "id": "9f1c2a...", "status": "queued" }
+  ```
+- `422 Unprocessable Entity` — validation failed (bad/missing `image_url`,
+  unsupported `scale` or `model`, invalid `webhook_url`).
+
+### `GET /api/jobs/{id}` — job status
+
+- `200 OK`
+  ```json
+  {
+    "id": "9f1c2a...",
+    "status": "succeeded",
+    "scale": 4,
+    "model": "realesrgan-x4plus",
+    "image_url": "https://example.com/photo.jpg",
+    "result": "/api/jobs/9f1c2a.../result",
+    "error": null,
+    "created_at": "2026-06-28T10:00:00+00:00",
+    "updated_at": "2026-06-28T10:00:12+00:00"
+  }
+  ```
+  - `result` is `null` until `status == "succeeded"`, then it's the path to the
+    result endpoint.
+  - `error` is `null` unless `status == "failed"`.
+- `404 Not Found` — unknown id.
+
+### `GET /api/jobs/{id}/result` — download the image
+
+- `200 OK` — raw image bytes with the correct `Content-Type`
+  (e.g. `image/png`). Open it in a browser or stream to a file.
+- `404 Not Found` — unknown id.
+- `409 Conflict` — job not finished yet (still `queued`/`processing`).
+- `410 Gone` — job succeeded but the file was already cleaned up
+  (see retention / `RESULT_TTL_HOURS`).
+
+### `GET /api/health` — liveness
+
+- `200 OK` → `{ "status": "ok" }`
+
+---
+
+## Supported models & scales
+
+- `scale`: `2`, `3`, `4`
+- `model`:
+  - `realesrgan-x4plus` — general photos (default)
+  - `realesrnet-x4plus` — general, less aggressive
+  - `realesrgan-x4plus-anime` — anime / illustrations
+  - `realesr-general-x4v3` — general, lightweight
+
+---
+
+## Webhooks
+
+If you pass `webhook_url`, the worker sends a `POST` to it when the job finishes
+(both `succeeded` and `failed`). Delivery is best-effort with retries.
+
+Payload (mirrors the job, `result` is absolute when the server has
+`PUBLIC_BASE_URL` set):
+
+```json
+{
+  "id": "9f1c2a...",
+  "status": "succeeded",
+  "model": "realesrgan-x4plus",
+  "scale": 4,
+  "image_url": "https://example.com/photo.jpg",
+  "result": "https://upscale.fotokalendare.cz/api/jobs/9f1c2a.../result",
+  "error": null,
+  "created_at": "2026-06-28T10:00:00+00:00"
+}
+```
+
+Headers (Standard Webhooks scheme):
+
+| header | value |
+| --- | --- |
+| `webhook-id` | unique id of this delivery |
+| `webhook-timestamp` | unix seconds |
+| `webhook-signature` | `v1,<base64(HMAC_SHA256)>` |
+
+Verify on your side: compute
+`HMAC_SHA256(secret_without_whsec_prefix, "{webhook-id}.{webhook-timestamp}.{raw_body}")`,
+base64-encode, compare to the `v1,...` value, and reject if the timestamp is
+older than ~5 minutes.
+
+```python
+import base64, hashlib, hmac, time
+
+def verify(secret, headers, body: bytes) -> bool:
+    wid = headers["webhook-id"]; ts = headers["webhook-timestamp"]
+    if abs(time.time() - int(ts)) > 300:
+        return False
+    key = secret.removeprefix("whsec_").encode()
+    expected = "v1," + base64.b64encode(
+        hmac.new(key, f"{wid}.{ts}.".encode() + body, hashlib.sha256).digest()
+    ).decode()
+    return any(hmac.compare_digest(s, expected) for s in headers["webhook-signature"].split())
+```
+
+---
+
+## Example clients
+
+### curl (polling)
+
+```bash
+BASE=https://upscale.fotokalendare.cz
+
+# 1) submit
+ID=$(curl -s -X POST "$BASE/api/upscale" \
+  -H 'Content-Type: application/json' \
+  -d '{"image_url":"https://example.com/photo.jpg","scale":4,"model":"realesrgan-x4plus"}' \
+  | sed -E 's/.*"id":"([^"]+)".*/\1/')
+
+# 2) poll until done
+while :; do
+  S=$(curl -s "$BASE/api/jobs/$ID" | sed -E 's/.*"status":"([^"]+)".*/\1/')
+  [ "$S" = succeeded ] && break
+  [ "$S" = failed ] && { echo "failed"; curl -s "$BASE/api/jobs/$ID"; exit 1; }
+  sleep 2
+done
+
+# 3) download
+curl -s "$BASE/api/jobs/$ID/result" -o out.png
+```
+
+### Python (polling)
+
+```python
+import time, httpx
+
+BASE = "https://upscale.fotokalendare.cz"
+
+def upscale(image_url: str, scale: int = 4, model: str = "realesrgan-x4plus") -> bytes:
+    with httpx.Client(base_url=BASE, timeout=30) as c:
+        job = c.post("/api/upscale", json={
+            "image_url": image_url, "scale": scale, "model": model,
+        }).raise_for_status().json()
+        jid = job["id"]
+
+        while True:
+            j = c.get(f"/api/jobs/{jid}").raise_for_status().json()
+            if j["status"] == "succeeded":
+                return c.get(f"/api/jobs/{jid}/result").raise_for_status().content
+            if j["status"] == "failed":
+                raise RuntimeError(j["error"])
+            time.sleep(2)
+
+open("out.png", "wb").write(upscale("https://example.com/photo.jpg"))
+```
+
+### JavaScript / TypeScript (webhook flow)
+
+```ts
+const BASE = "https://upscale.fotokalendare.cz";
+
+// submit and let the server call you back
+const res = await fetch(`${BASE}/api/upscale`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    image_url: "https://example.com/photo.jpg",
+    scale: 4,
+    model: "realesrgan-x4plus",
+    webhook_url: "https://your-app.example.com/hooks/upscale",
+  }),
+});
+const { id } = await res.json(); // store id, wait for the webhook
+```
+
+Your webhook handler then receives the payload above; use the `result` URL to
+fetch the upscaled image.
+
+---
+
+## Notes & limits
+
+- **Input must be publicly downloadable** by the worker; there's a size cap
+  (`MAX_IMAGE_BYTES`, default 50 MB) and a download timeout.
+- **Output format** is PNG (`/result` returns `image/png`).
+- **Retention:** finished jobs and their result files are removed after
+  `RESULT_TTL_HOURS` (default 24h). Fetch results before they expire, or the
+  result endpoint returns `410`.
+- **Idempotency:** each `POST /api/upscale` creates a new job; the API doesn't
+  dedupe identical requests.
