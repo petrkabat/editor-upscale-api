@@ -255,7 +255,8 @@ make test
 `scripts/benchmark.py` submits N jobs, waits for them all to finish, and reports
 throughput. The headline metric is **effective seconds per image**
 (`wall_clock / N`) — that's what drops as you add workers/GPUs. Wall clock is
-derived from server timestamps, so it's independent of the poll interval.
+derived from server timestamps, so it's independent of the poll interval. The
+script is pure standard library, so any `python3` runs it (no venv needed).
 
 ```bash
 # against a running stack (uses BASE_URL / API_TOKEN env if set)
@@ -264,11 +265,14 @@ make bench COUNT=100 LABEL="1 worker" CSV=bench.csv
 # scale up, run again, compare
 docker compose up -d --scale worker=2
 make bench COUNT=100 LABEL="2 workers" CSV=bench.csv
+
+# benchmark on your own (representative) image
+make bench COUNT=50 IMAGE="https://your-host/sample-4000x3000.jpg" LABEL="4K"
 ```
 
 Each run appends a row to the CSV (label, wall, throughput, sec/image) so you
 can compare worker counts, GPUs and configs over time. Full options:
-`python scripts/benchmark.py --help`.
+`python3 scripts/benchmark.py --help`.
 
 > Per-job latency in the output includes queue wait, so it grows with backlog —
 > use **throughput / effective per image** to judge parallelism, not latency.

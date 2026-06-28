@@ -5,10 +5,13 @@ Submits N jobs (same image is fine), waits for them all to finish, and reports
 throughput and the effective time per image. The headline metric — effective
 seconds/image = wall-clock / N — is what improves as you add workers/GPUs.
 
+Uses only the Python standard library, so it runs anywhere with python3 (no
+virtualenv or extra packages needed).
+
 Usage:
-    python scripts/benchmark.py --count 100 --label "1 worker, 1x4070"
+    python3 scripts/benchmark.py --count 100 --label "1 worker, 1x4070"
     BASE_URL=https://upscale.example.com API_TOKEN=... \\
-        python scripts/benchmark.py --count 100 --csv bench.csv --label "2 workers"
+        python3 scripts/benchmark.py --count 100 --csv bench.csv --label "2 workers"
 
 Run the same command after changing your deployment (e.g.
 `docker compose up -d --scale worker=2`) and compare the numbers.
@@ -17,13 +20,14 @@ Run the same command after changing your deployment (e.g.
 from __future__ import annotations
 
 import argparse
-import asyncio
+import json
 import os
 import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-
-import httpx
 
 DEFAULT_IMAGE = (
     "https://raw.githubusercontent.com/xinntao/Real-ESRGAN/master/inputs/0014.jpg"
@@ -35,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-url", default=os.environ.get("BASE_URL", "http://localhost:8000"))
     p.add_argument("--count", type=int, default=100, help="number of jobs to submit")
-    p.add_argument("--image-url", default=DEFAULT_IMAGE)
+    p.add_argument("--image-url", default=os.environ.get("IMAGE_URL", DEFAULT_IMAGE))
     p.add_argument("--scale", type=int, default=4, choices=(2, 3, 4))
     p.add_argument("--model", default="realesrgan-x4plus")
     p.add_argument("--token", default=os.environ.get("API_TOKEN", ""))
@@ -51,64 +55,60 @@ def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-async def _submit_all(
-    client: httpx.AsyncClient, args: argparse.Namespace
+def _request(url: str, headers: dict[str, str], data: bytes | None) -> dict:
+    req = urllib.request.Request(
+        url, data=data, headers=headers, method="POST" if data else "GET"
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _submit(base: str, headers: dict[str, str], body: bytes) -> str | None:
+    try:
+        return _request(f"{base}/api/upscale", headers, body)["id"]
+    except (urllib.error.URLError, KeyError, ValueError) as exc:
+        print(f"  submit failed: {exc}")
+        return None
+
+
+def _get(base: str, headers: dict[str, str], job_id: str) -> dict:
+    return _request(f"{base}/api/jobs/{job_id}", headers, None)
+
+
+def submit_all(
+    pool: ThreadPoolExecutor, base: str, headers: dict[str, str], args: argparse.Namespace
 ) -> list[str]:
-    sem = asyncio.Semaphore(args.concurrency)
-    body = {"image_url": args.image_url, "scale": args.scale, "model": args.model}
-
-    async def submit() -> str | None:
-        async with sem:
-            try:
-                r = await client.post("/api/upscale", json=body)
-                r.raise_for_status()
-                return r.json()["id"]
-            except httpx.HTTPError as exc:
-                print(f"  submit failed: {exc}")
-                return None
-
-    ids = await asyncio.gather(*(submit() for _ in range(args.count)))
+    body = json.dumps(
+        {"image_url": args.image_url, "scale": args.scale, "model": args.model}
+    ).encode()
+    post_headers = {**headers, "Content-Type": "application/json"}
+    ids = pool.map(lambda _: _submit(base, post_headers, body), range(args.count))
     return [i for i in ids if i]
 
 
-async def _fetch(client: httpx.AsyncClient, job_id: str) -> dict:
-    r = await client.get(f"/api/jobs/{job_id}")
-    r.raise_for_status()
-    return r.json()
-
-
-async def _wait_all(
-    client: httpx.AsyncClient, ids: list[str], args: argparse.Namespace
+def wait_all(
+    pool: ThreadPoolExecutor, base: str, headers: dict[str, str],
+    ids: list[str], args: argparse.Namespace,
 ) -> dict[str, dict]:
-    sem = asyncio.Semaphore(args.concurrency)
     final: dict[str, dict] = {}
     pending = set(ids)
     deadline = time.monotonic() + args.timeout
 
-    async def fetch(job_id: str) -> dict:
-        async with sem:
-            return await _fetch(client, job_id)
-
     while pending and time.monotonic() < deadline:
-        jobs = await asyncio.gather(*(fetch(i) for i in pending))
-        for job in jobs:
+        for job in pool.map(lambda i: _get(base, headers, i), list(pending)):
             if job["status"] in TERMINAL:
                 final[job["id"]] = job
                 pending.discard(job["id"])
-        done = len(final)
-        print(f"  {done}/{len(ids)} done...", end="\r", flush=True)
+        print(f"  {len(final)}/{len(ids)} done...", end="\r", flush=True)
         if pending:
-            await asyncio.sleep(args.poll_interval)
+            time.sleep(args.poll_interval)
     print()
     return final
 
 
-def _report(
-    final: dict[str, dict], submitted: int, args: argparse.Namespace
-) -> None:
+def report(final: dict[str, dict], submitted: int, args: argparse.Namespace) -> None:
     succeeded = [j for j in final.values() if j["status"] == "succeeded"]
     failed = [j for j in final.values() if j["status"] == "failed"]
-    n = len(final)
     if not succeeded:
         print("No jobs succeeded — nothing to measure.")
         if failed:
@@ -121,11 +121,10 @@ def _report(
     wall = (max(updated) - min(created)).total_seconds()
 
     # Per-job latency (queue wait + processing), for reference only.
-    latencies = [
+    latencies = sorted(
         (_parse_ts(j["updated_at"]) - _parse_ts(j["created_at"])).total_seconds()
         for j in final.values()
-    ]
-    latencies.sort()
+    )
     mean_lat = sum(latencies) / len(latencies)
 
     throughput = len(succeeded) / wall if wall > 0 else 0.0
@@ -134,8 +133,9 @@ def _report(
     print("=" * 52)
     if args.label:
         print(f"Label:               {args.label}")
+    print(f"Image:               {args.image_url}")
     print(f"Jobs submitted:      {submitted}")
-    print(f"Completed:           {n}  ({len(succeeded)} ok, {len(failed)} failed)")
+    print(f"Completed:           {len(final)}  ({len(succeeded)} ok, {len(failed)} failed)")
     print(f"Wall clock:          {wall:.1f} s")
     print(f"Throughput:          {throughput:.3f} img/s")
     print(f"Effective per image: {per_image:.2f} s   <-- parallelism metric")
@@ -164,23 +164,22 @@ def _report(
         print(f"Appended result to {path}")
 
 
-async def main() -> None:
+def main() -> None:
     args = parse_args()
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
+    base = args.base_url.rstrip("/")
 
-    print(f"Submitting {args.count} jobs to {args.base_url} ...")
-    async with httpx.AsyncClient(
-        base_url=args.base_url, headers=headers, timeout=30
-    ) as client:
+    print(f"Submitting {args.count} jobs to {base} ...")
+    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
         t0 = time.monotonic()
-        ids = await _submit_all(client, args)
+        ids = submit_all(pool, base, headers, args)
         print(f"Submitted {len(ids)} jobs in {time.monotonic() - t0:.1f} s")
         if not ids:
             return
-        final = await _wait_all(client, ids, args)
+        final = wait_all(pool, base, headers, ids, args)
 
-    _report(final, submitted=len(ids), args=args)
+    report(final, submitted=len(ids), args=args)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

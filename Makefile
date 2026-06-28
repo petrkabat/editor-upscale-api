@@ -13,9 +13,12 @@ dev: ## Install dev/test dependencies
 test: ## Run the test suite
 	pytest
 
-bench: ## Throughput benchmark (vars: COUNT, BASE_URL, API_TOKEN, LABEL, CSV)
-	python scripts/benchmark.py \
+PYTHON ?= python3
+
+bench: ## Throughput benchmark (vars: COUNT, IMAGE, BASE_URL, API_TOKEN, LABEL, CSV)
+	$(PYTHON) scripts/benchmark.py \
 		--count $(or $(COUNT),100) \
+		$(if $(IMAGE),--image-url "$(IMAGE)") \
 		$(if $(LABEL),--label "$(LABEL)") \
 		$(if $(CSV),--csv $(CSV))
 
