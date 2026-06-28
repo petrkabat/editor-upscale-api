@@ -11,11 +11,10 @@ from typing import Any
 import httpx
 from arq import cron
 
-from . import webhooks
 from .config import Settings, get_settings
 from .db import Database
 from .queue import redis_settings
-from .schemas import JobStatus, WebhookPayload
+from .schemas import JobStatus
 
 logger = logging.getLogger("upscale_api.worker")
 
@@ -74,40 +73,6 @@ async def run_upscale(ctx: dict[str, Any], job_id: str) -> str:
         # The downloaded input is only needed during inference.
         if settings.delete_input_after:
             input_path.unlink(missing_ok=True)
-        if job.webhook_url:
-            await _notify_webhook(db, settings, job_id)
-
-
-async def _notify_webhook(db: Database, settings: Settings, job_id: str) -> None:
-    """Deliver the finished job to its webhook_url (best effort)."""
-    job = await db.get_job(job_id)
-    if job is None or not job.webhook_url:
-        return
-
-    result = None
-    if job.status == JobStatus.succeeded.value:
-        path = f"/api/jobs/{job.id}/result"
-        base = settings.public_base_url.rstrip("/")
-        result = f"{base}{path}" if base else path
-
-    payload = WebhookPayload(
-        id=job.id,
-        status=JobStatus(job.status),
-        model=job.model,
-        scale=job.scale,
-        image_url=job.image_url,
-        result=result,
-        error=job.error,
-        created_at=job.created_at,
-    )
-    body = payload.model_dump_json().encode("utf-8")
-    await webhooks.send(
-        job.webhook_url,
-        body,
-        secret=settings.webhook_secret,
-        timeout_seconds=settings.webhook_timeout_seconds,
-        max_retries=settings.webhook_max_retries,
-    )
 
 
 async def cleanup_old_results(ctx: dict[str, Any]) -> int:

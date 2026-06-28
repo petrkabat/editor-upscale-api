@@ -20,6 +20,7 @@ from .schemas import (
     UpscaleAccepted,
     UpscaleRequest,
 )
+from .urls import result_url
 
 
 @asynccontextmanager
@@ -50,9 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_db() -> Database:
         return app.state.db
 
-    def result_url(job_id: str) -> str:
-        return f"/api/jobs/{job_id}/result"
-
     def to_response(job: Job) -> JobResponse:
         return JobResponse(
             id=job.id,
@@ -60,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             scale=job.scale,
             model=job.model,
             image_url=job.image_url,
-            result=result_url(job.id)
+            result=result_url(settings, job.id)
             if job.status == JobStatus.succeeded.value
             else None,
             error=job.error,
@@ -84,7 +82,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_url=str(payload.image_url),
             scale=payload.scale,
             model=payload.model,
-            webhook_url=str(payload.webhook_url) if payload.webhook_url else None,
         )
         await enqueue_upscale(request.app.state.redis_pool, job_id)
         return UpscaleAccepted(id=job_id, status=JobStatus.queued)

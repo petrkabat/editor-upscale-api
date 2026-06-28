@@ -7,7 +7,7 @@ How to talk to the Real-ESRGAN Upscale API from your own app.
 - **Content type:** JSON requests/responses, except the result image which is
   raw bytes.
 - **Auth:** none on the API itself (put it behind your own gateway/tunnel if
-  needed). Webhooks are signed (see below).
+  needed).
 
 ## How it works (lifecycle)
 
@@ -22,8 +22,6 @@ POST /api/upscale  ──▶  job created, status "queued"  ──▶  returns {
                     ▼                                ▼
               "succeeded"                        "failed"
         result image available              error message set
-                    │                                │
-                    └──────── optional webhook ──────┘
 ```
 
 A job moves through these `status` values:
@@ -35,10 +33,8 @@ A job moves through these `status` values:
 | `succeeded` | done, result image is ready |
 | `failed` | something went wrong, see `error` |
 
-Two ways to get the result:
-
-1. **Poll** `GET /api/jobs/{id}` until `status` is `succeeded`/`failed`.
-2. **Webhook** — pass `webhook_url` and get POSTed when it finishes (no polling).
+**Getting the result:** poll `GET /api/jobs/{id}` until `status` is
+`succeeded`/`failed`, then download the image from the `result` URL.
 
 ---
 
@@ -53,15 +49,12 @@ Request body:
 | `image_url` | string (URL) | yes | — | publicly reachable source image |
 | `scale` | int | no | `4` | one of `2`, `3`, `4` |
 | `model` | string | no | `realesrgan-x4plus` | see model list below |
-| `webhook_url` | string (URL) | no | — | called when the job finishes |
 
-```jsonc
-// request
+```json
 {
   "image_url": "https://example.com/photo.jpg",
   "scale": 4,
-  "model": "realesrgan-x4plus",
-  "webhook_url": "https://your-app.example.com/hooks/upscale"  // optional
+  "model": "realesrgan-x4plus"
 }
 ```
 
@@ -72,7 +65,7 @@ Responses:
   { "id": "9f1c2a...", "status": "queued" }
   ```
 - `422 Unprocessable Entity` — validation failed (bad/missing `image_url`,
-  unsupported `scale` or `model`, invalid `webhook_url`).
+  unsupported `scale` or `model`).
 
 ### `GET /api/jobs/{id}` — job status
 
@@ -118,56 +111,6 @@ Responses:
   - `realesrnet-x4plus` — general, less aggressive
   - `realesrgan-x4plus-anime` — anime / illustrations
   - `realesr-general-x4v3` — general, lightweight
-
----
-
-## Webhooks
-
-If you pass `webhook_url`, the worker sends a `POST` to it when the job finishes
-(both `succeeded` and `failed`). Delivery is best-effort with retries.
-
-Payload (mirrors the job, `result` is absolute when the server has
-`PUBLIC_BASE_URL` set):
-
-```json
-{
-  "id": "9f1c2a...",
-  "status": "succeeded",
-  "model": "realesrgan-x4plus",
-  "scale": 4,
-  "image_url": "https://example.com/photo.jpg",
-  "result": "https://upscale.fotokalendare.cz/api/jobs/9f1c2a.../result",
-  "error": null,
-  "created_at": "2026-06-28T10:00:00+00:00"
-}
-```
-
-Headers (Standard Webhooks scheme):
-
-| header | value |
-| --- | --- |
-| `webhook-id` | unique id of this delivery |
-| `webhook-timestamp` | unix seconds |
-| `webhook-signature` | `v1,<base64(HMAC_SHA256)>` |
-
-Verify on your side: compute
-`HMAC_SHA256(secret_without_whsec_prefix, "{webhook-id}.{webhook-timestamp}.{raw_body}")`,
-base64-encode, compare to the `v1,...` value, and reject if the timestamp is
-older than ~5 minutes.
-
-```python
-import base64, hashlib, hmac, time
-
-def verify(secret, headers, body: bytes) -> bool:
-    wid = headers["webhook-id"]; ts = headers["webhook-timestamp"]
-    if abs(time.time() - int(ts)) > 300:
-        return False
-    key = secret.removeprefix("whsec_").encode()
-    expected = "v1," + base64.b64encode(
-        hmac.new(key, f"{wid}.{ts}.".encode() + body, hashlib.sha256).digest()
-    ).decode()
-    return any(hmac.compare_digest(s, expected) for s in headers["webhook-signature"].split())
-```
 
 ---
 
@@ -221,27 +164,28 @@ def upscale(image_url: str, scale: int = 4, model: str = "realesrgan-x4plus") ->
 open("out.png", "wb").write(upscale("https://example.com/photo.jpg"))
 ```
 
-### JavaScript / TypeScript (webhook flow)
+### JavaScript / TypeScript (polling)
 
 ```ts
 const BASE = "https://upscale.fotokalendare.cz";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// submit and let the server call you back
-const res = await fetch(`${BASE}/api/upscale`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    image_url: "https://example.com/photo.jpg",
-    scale: 4,
-    model: "realesrgan-x4plus",
-    webhook_url: "https://your-app.example.com/hooks/upscale",
-  }),
-});
-const { id } = await res.json(); // store id, wait for the webhook
+async function upscale(imageUrl: string, scale = 4, model = "realesrgan-x4plus") {
+  const submit = await fetch(`${BASE}/api/upscale`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_url: imageUrl, scale, model }),
+  });
+  const { id } = await submit.json();
+
+  while (true) {
+    const job = await (await fetch(`${BASE}/api/jobs/${id}`)).json();
+    if (job.status === "succeeded") return job.result; // URL of the image
+    if (job.status === "failed") throw new Error(job.error);
+    await sleep(2000);
+  }
+}
 ```
-
-Your webhook handler then receives the payload above; use the `result` URL to
-fetch the upscaled image.
 
 ---
 

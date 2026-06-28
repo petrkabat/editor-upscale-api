@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     model       TEXT NOT NULL,
     result_path TEXT,
     error       TEXT,
-    webhook_url TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -39,7 +38,6 @@ class Job:
     model: str
     result_path: Optional[str]
     error: Optional[str]
-    webhook_url: Optional[str]
     created_at: datetime
     updated_at: datetime
 
@@ -57,7 +55,6 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
         model=row["model"],
         result_path=row["result_path"],
         error=row["error"],
-        webhook_url=row["webhook_url"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -87,13 +84,7 @@ class Database:
             await conn.commit()
 
     async def create_job(
-        self,
-        *,
-        job_id: str,
-        image_url: str,
-        scale: int,
-        model: str,
-        webhook_url: Optional[str] = None,
+        self, *, job_id: str, image_url: str, scale: int, model: str
     ) -> Job:
         now = _now()
         async with self.connect() as conn:
@@ -101,13 +92,10 @@ class Database:
                 """
                 INSERT INTO jobs (
                     id, status, image_url, scale, model,
-                    result_path, error, webhook_url, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+                    result_path, error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
                 """,
-                (
-                    job_id, JobStatus.queued.value, image_url, scale, model,
-                    webhook_url, now, now,
-                ),
+                (job_id, JobStatus.queued.value, image_url, scale, model, now, now),
             )
             await conn.commit()
         job = await self.get_job(job_id)
