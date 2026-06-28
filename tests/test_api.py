@@ -81,6 +81,21 @@ def test_get_job_returns_queued(client: TestClient) -> None:
     assert body["id"] == job_id
     assert body["status"] == "queued"
     assert body["result"] is None
+    # First (and only) queued job → nothing ahead of it.
+    assert body["queue_position"] == 0
+
+
+def test_queue_position_counts_jobs_ahead(client: TestClient) -> None:
+    ids = [
+        client.post(
+            "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
+        ).json()["id"]
+        for _ in range(3)
+    ]
+    positions = [
+        client.get(f"/api/jobs/{jid}").json()["queue_position"] for jid in ids
+    ]
+    assert positions == [0, 1, 2]
 
 
 def test_get_job_not_found(client: TestClient) -> None:

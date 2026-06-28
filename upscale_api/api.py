@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_db() -> Database:
         return app.state.db
 
-    def to_response(job: Job) -> JobResponse:
+    def to_response(job: Job, queue_position: int | None = None) -> JobResponse:
         return JobResponse(
             id=job.id,
             status=JobStatus(job.status),
@@ -62,6 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if job.status == JobStatus.succeeded.value
             else None,
             error=job.error,
+            queue_position=queue_position,
             created_at=job.created_at,
             updated_at=job.updated_at,
         )
@@ -93,7 +94,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = await db.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
-        return to_response(job)
+        position = (
+            await db.count_ahead(job)
+            if job.status == JobStatus.queued.value
+            else None
+        )
+        return to_response(job, queue_position=position)
 
     @app.get("/api/jobs/{job_id}/result")
     async def get_result(

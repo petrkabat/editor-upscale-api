@@ -59,12 +59,13 @@ Response (`202 Accepted`):
 ```json
 {
   "id": "9f1c...",
-  "status": "succeeded",
+  "status": "queued",
   "scale": 4,
   "model": "realesrgan-x4plus",
   "image_url": "https://example.com/image.jpg",
-  "result": "/api/jobs/9f1c.../result",
+  "result": null,
   "error": null,
+  "queue_position": 3,
   "created_at": "...",
   "updated_at": "..."
 }
@@ -72,6 +73,8 @@ Response (`202 Accepted`):
 
 `status` is one of `queued`, `processing`, `succeeded`, `failed`.
 `result` is populated only when the job has succeeded.
+`queue_position` is the number of jobs ahead in the queue (`0` = next); it is
+only present while `status == "queued"`, otherwise `null`.
 
 ### `GET /api/jobs/{id}/result`
 

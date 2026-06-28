@@ -110,6 +110,23 @@ class Database:
                 row = await cur.fetchone()
         return _row_to_job(row) if row else None
 
+    async def count_ahead(self, job: Job) -> int:
+        """Number of unfinished jobs queued/processing before `job` (FIFO)."""
+        async with self.connect() as conn:
+            async with conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM jobs
+                WHERE status IN (?, ?) AND created_at < ?
+                """,
+                (
+                    JobStatus.queued.value,
+                    JobStatus.processing.value,
+                    job.created_at.isoformat(),
+                ),
+            ) as cur:
+                row = await cur.fetchone()
+        return int(row["n"])
+
     async def update_status(
         self,
         job_id: str,

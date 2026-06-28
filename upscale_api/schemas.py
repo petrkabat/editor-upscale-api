@@ -63,5 +63,7 @@ class JobResponse(BaseModel):
     image_url: str
     result: Optional[str] = None
     error: Optional[str] = None
+    # Jobs ahead in the queue (only while status == "queued"; 0 = next up).
+    queue_position: Optional[int] = None
     created_at: datetime
     updated_at: datetime

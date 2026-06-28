@@ -73,19 +73,23 @@ Responses:
   ```json
   {
     "id": "9f1c2a...",
-    "status": "succeeded",
+    "status": "queued",
     "scale": 4,
     "model": "realesrgan-x4plus",
     "image_url": "https://example.com/photo.jpg",
-    "result": "/api/jobs/9f1c2a.../result",
+    "result": null,
     "error": null,
+    "queue_position": 3,
     "created_at": "2026-06-28T10:00:00+00:00",
-    "updated_at": "2026-06-28T10:00:12+00:00"
+    "updated_at": "2026-06-28T10:00:00+00:00"
   }
   ```
-  - `result` is `null` until `status == "succeeded"`, then it's the path to the
-    result endpoint.
+  - `result` is `null` until `status == "succeeded"`, then it's the URL of the
+    result image (absolute when the server has `PUBLIC_BASE_URL` set).
   - `error` is `null` unless `status == "failed"`.
+  - `queue_position` is the number of jobs ahead in the queue, present only
+    while `status == "queued"` (`0` = next to run); `null` otherwise. Use it to
+    show progress / estimated wait while polling.
 - `404 Not Found` — unknown id.
 
 ### `GET /api/jobs/{id}/result` — download the image
@@ -159,6 +163,8 @@ def upscale(image_url: str, scale: int = 4, model: str = "realesrgan-x4plus") ->
                 return c.get(f"/api/jobs/{jid}/result").raise_for_status().content
             if j["status"] == "failed":
                 raise RuntimeError(j["error"])
+            if j["status"] == "queued":
+                print(f"waiting, {j['queue_position']} job(s) ahead")
             time.sleep(2)
 
 open("out.png", "wb").write(upscale("https://example.com/photo.jpg"))
