@@ -1,5 +1,6 @@
 # GPU-enabled worker image running Real-ESRGAN via arq.
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# CUDA 12.8 + torch cu128 is required for Blackwell GPUs (RTX 50xx, sm_120).
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 WORKDIR /app
 
@@ -17,9 +18,10 @@ RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
     python -m pip install --no-cache-dir --upgrade pip
 
 COPY requirements.txt requirements-worker.txt ./
-# Install torch with CUDA wheels, then the rest of the stack.
-RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
-        --index-url https://download.pytorch.org/whl/cu121 && \
+# Install torch from the cu128 wheel index (Blackwell / sm_120 support), then
+# the rest of the stack.
+RUN pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 \
+        --index-url https://download.pytorch.org/whl/cu128 && \
     pip install --no-cache-dir -r requirements-worker.txt
 
 COPY upscale_api ./upscale_api

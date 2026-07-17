@@ -154,10 +154,19 @@ Other distros (RHEL/Fedora/SUSE) and details:
 ### 4. Verify GPU access from a container
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 ```
 
 If that prints your GPU, the stack below will work.
+
+> **GPU architecture vs torch build.** The worker image ships PyTorch built for
+> CUDA 12.8 (cu128), which covers current NVIDIA GPUs including Blackwell
+> (RTX 50xx, compute capability 12.0). If you hit
+> `CUDA error: no kernel image is available for execution on the device`, the
+> torch build doesn't include your GPU's architecture — check it with
+> `nvidia-smi --query-gpu=name,compute_cap --format=csv` and
+> `docker compose exec worker python -c "import torch; print(torch.cuda.get_arch_list())"`,
+> then adjust the torch version + wheel index in `docker/Dockerfile.worker`.
 
 ## Run with Docker Compose (GPU)
 

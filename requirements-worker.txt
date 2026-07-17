@@ -2,10 +2,12 @@
 # Installed on top of requirements.txt.
 -r requirements.txt
 
+# NOTE: torch + torchvision are installed in docker/Dockerfile.worker from the
+# CUDA-specific wheel index (cu128 — required for Blackwell / RTX 50xx, sm_120),
+# so they are intentionally NOT pinned here to avoid pulling a mismatched build.
+
 # Pinned for compatibility with the realesrgan / basicsr stack.
 numpy==1.26.4
 opencv-python-headless==4.10.0.84
-torch==2.3.1
-torchvision==0.18.1
 realesrgan==0.3.0
 basicsr==1.4.2
