@@ -283,6 +283,31 @@ Each run appends a row to the CSV (label, wall, throughput, sec/image) so you
 can compare worker counts, GPUs and configs over time. Full options:
 `python3 scripts/benchmark.py --help`.
 
+### Worker scaling sweep
+
+`scripts/bench_sweep.sh` (run **on the server**) automates the whole thing: for
+each worker count it scales the `worker` service, benchmarks it, and prints a
+summary with speedup and parallel efficiency.
+
+```bash
+WORKERS="1 2 3 4 5" COUNT=100 API_TOKEN=xxx ./scripts/bench_sweep.sh
+```
+
+```
+============================ SCALING SUMMARY ============================
+workers  wall_s  img/s  s/img  speedup  efficiency
+1        60.0    1.667  0.60   1.00x    100%
+2        30.5    3.281  0.30   1.97x    98%
+3        20.4    4.912  0.20   2.95x    98%
+4        15.2    6.590  0.15   3.95x    99%
+5        12.3    8.121  0.12   4.87x    97%
+========================================================================
+```
+
+Efficiency near 100% means the GPU isn't saturated by a single job and
+concurrency scales almost linearly; when it starts dropping (or VRAM runs out),
+you've found the useful worker count for that GPU.
+
 > Per-job latency in the output includes queue wait, so it grows with backlog —
 > use **throughput / effective per image** to judge parallelism, not latency.
 
@@ -300,7 +325,7 @@ upscale_api/
   urls.py       Result URL helper (absolute when PUBLIC_BASE_URL is set)
   config.py     Settings (env-driven)
 tests/          pytest API tests
-scripts/        test_upscale.sh (smoke test), benchmark.py (throughput)
+scripts/        test_upscale.sh (smoke), benchmark.py + bench_sweep.sh (throughput)
 docker/         API + GPU worker Dockerfiles
 docker-compose.yml
 Makefile

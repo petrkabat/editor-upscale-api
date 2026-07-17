@@ -22,6 +22,9 @@ bench: ## Throughput benchmark (vars: COUNT, IMAGE, BASE_URL, API_TOKEN, LABEL, 
 		$(if $(LABEL),--label "$(LABEL)") \
 		$(if $(CSV),--csv $(CSV))
 
+bench-sweep: ## Sweep worker counts + scaling summary (vars: WORKERS, COUNT, API_TOKEN, IMAGE)
+	./scripts/bench_sweep.sh
+
 run-api: ## Run the API locally (needs a local Redis)
 	REDIS_HOST=localhost uvicorn upscale_api.api:app --reload --port 8000
 
