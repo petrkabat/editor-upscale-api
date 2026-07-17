@@ -201,6 +201,25 @@ curl -s http://localhost:8000/api/jobs/<job_id>
 curl -s http://localhost:8000/api/jobs/<job_id>/result -o out.png
 ```
 
+### Auto-start on boot (systemd)
+
+The services use `restart: unless-stopped`, so Docker brings them back after a
+reboot **if** they were running when it went down. To pin the exact desired
+state (worker count, tunnel profile) on every boot, install the provided
+systemd unit:
+
+```bash
+sudo systemctl enable docker                     # Docker itself starts on boot
+sudo cp deploy/upscale.service /etc/systemd/system/upscale.service
+sudoedit /etc/systemd/system/upscale.service     # set WorkingDirectory + scale
+sudo systemctl daemon-reload
+sudo systemctl enable --now upscale.service
+```
+
+It runs `docker compose --profile tunnel up -d --scale worker=N` on boot and
+`down` on stop. Manage with `systemctl status|restart|stop upscale`. Images must
+already be built (`docker compose build`); the unit doesn't build.
+
 ## Expose publicly with Cloudflare Tunnel
 
 Two optional `cloudflared` services are wired up behind Compose profiles, so
