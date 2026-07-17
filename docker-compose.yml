@@ -48,7 +48,16 @@ services:
       OUTPUT_DIR: /data/outputs
       WEIGHTS_DIR: /data/weights
       USE_GPU: "true"
-      # Return absolute result URLs; pulled from host env / .env (empty if unset).
+      # Tunables pulled from host env / .env (defaults if unset). The .env file
+      # is NOT visible inside the container, so anything the worker reads must be
+      # passed through here.
+      TILE_SIZE: ${TILE_SIZE:-0}
+      PRELOAD_MODEL: ${PRELOAD_MODEL:-true}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-realesrgan-x4plus}
+      DOWNLOAD_TIMEOUT_SECONDS: ${DOWNLOAD_TIMEOUT_SECONDS:-60}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-52428800}
+      RESULT_TTL_HOURS: ${RESULT_TTL_HOURS:-24}
+      DELETE_INPUT_AFTER: ${DELETE_INPUT_AFTER:-true}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - app-data:/data
