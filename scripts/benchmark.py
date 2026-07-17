@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-url", default=os.environ.get("BASE_URL", "http://localhost:8000"))
     p.add_argument("--count", type=int, default=100, help="number of jobs to submit")
+    p.add_argument("--warmup", type=int, default=0,
+                   help="throwaway jobs run before measuring (warms cold workers)")
     p.add_argument("--image-url", default=os.environ.get("IMAGE_URL", DEFAULT_IMAGE))
     p.add_argument("--scale", type=int, default=4, choices=(2, 3, 4))
     p.add_argument("--model", default="realesrgan-x4plus")
@@ -76,13 +78,14 @@ def _get(base: str, headers: dict[str, str], job_id: str) -> dict:
 
 
 def submit_all(
-    pool: ThreadPoolExecutor, base: str, headers: dict[str, str], args: argparse.Namespace
+    pool: ThreadPoolExecutor, base: str, headers: dict[str, str],
+    args: argparse.Namespace, count: int,
 ) -> list[str]:
     body = json.dumps(
         {"image_url": args.image_url, "scale": args.scale, "model": args.model}
     ).encode()
     post_headers = {**headers, "Content-Type": "application/json"}
-    ids = pool.map(lambda _: _submit(base, post_headers, body), range(args.count))
+    ids = pool.map(lambda _: _submit(base, post_headers, body), range(count))
     return [i for i in ids if i]
 
 
@@ -169,10 +172,15 @@ def main() -> None:
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
 
-    print(f"Submitting {args.count} jobs to {base} ...")
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+        if args.warmup > 0:
+            print(f"Warming up with {args.warmup} throwaway jobs ...")
+            warm_ids = submit_all(pool, base, headers, args, args.warmup)
+            wait_all(pool, base, headers, warm_ids, args)
+
+        print(f"Submitting {args.count} jobs to {base} ...")
         t0 = time.monotonic()
-        ids = submit_all(pool, base, headers, args)
+        ids = submit_all(pool, base, headers, args, args.count)
         print(f"Submitted {len(ids)} jobs in {time.monotonic() - t0:.1f} s")
         if not ids:
             return

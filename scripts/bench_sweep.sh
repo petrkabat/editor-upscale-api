@@ -17,8 +17,13 @@
 #   API_TOKEN  bearer token if API needs it  (default empty)
 #   IMAGE      custom image url              (default: benchmark's sample)
 #   CSV        output csv                    (default bench-<timestamp>.csv)
-#   WARMUP     seconds to let workers connect after scaling (default 8)
+#   SETTLE     seconds to let workers connect after scaling (default 5)
+#   WARMUP     throwaway jobs before each measured run; "" = auto (3x workers)
 #   PYTHON     python interpreter            (default python3)
+#
+# WARMUP matters: the model loads lazily on each worker's first job, so freshly
+# scaled (cold) workers would otherwise inflate the measured wall clock. The
+# warmup jobs load the model on every worker before the timed run starts.
 set -euo pipefail
 
 WORKERS="${WORKERS:-1 2 3 4 5}"
@@ -27,7 +32,8 @@ BASE_URL="${BASE_URL:-http://localhost:8000}"
 API_TOKEN="${API_TOKEN:-}"
 IMAGE="${IMAGE:-}"
 CSV="${CSV:-bench-$(date +%Y%m%d-%H%M%S).csv}"
-WARMUP="${WARMUP:-8}"
+SETTLE="${SETTLE:-5}"
+WARMUP="${WARMUP:-}"
 PYTHON="${PYTHON:-python3}"
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -50,11 +56,12 @@ for n in $WORKERS; do
     [ "$running" -ge "$n" ] && break
     sleep 1
   done
-  echo "    $running worker(s) up; warming up ${WARMUP}s ..."
-  sleep "$WARMUP"
+  echo "    $running worker(s) up; settling ${SETTLE}s ..."
+  sleep "$SETTLE"
 
+  warm="${WARMUP:-$((n * 3))}"
   "$PYTHON" "$here/benchmark.py" \
-    --base-url "$BASE_URL" --count "$COUNT" \
+    --base-url "$BASE_URL" --count "$COUNT" --warmup "$warm" \
     --label "$n workers" --csv "$CSV" "${extra[@]}"
 done
 

@@ -308,6 +308,12 @@ Efficiency near 100% means the GPU isn't saturated by a single job and
 concurrency scales almost linearly; when it starts dropping (or VRAM runs out),
 you've found the useful worker count for that GPU.
 
+> **Warmup matters.** The model loads lazily on each worker's first job, so
+> freshly scaled (cold) workers inflate the measured wall clock — you'd see a
+> count that jumps around. The sweep runs a warmup batch (default 3× the worker
+> count) before each timed run so every worker is warm. For a single run use
+> `--warmup N` on `benchmark.py`.
+
 > Per-job latency in the output includes queue wait, so it grows with backlog —
 > use **throughput / effective per image** to judge parallelism, not latency.
 
