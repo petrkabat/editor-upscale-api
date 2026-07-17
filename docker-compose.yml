@@ -2,8 +2,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # No `ports:` — Redis is only reached by api/worker over the internal
+    # compose network (redis:6379). Never publish it; it has no auth.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -15,8 +15,11 @@ services:
       context: .
       dockerfile: docker/Dockerfile.api
     restart: unless-stopped
+    # Bind to localhost only: the Cloudflare tunnel reaches the API over the
+    # internal network (api:8000), so no need to expose it publicly. 127.0.0.1
+    # keeps it reachable for local curl/benchmark but not from the internet.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       REDIS_HOST: redis
       DATA_DIR: /data

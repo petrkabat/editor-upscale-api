@@ -220,6 +220,36 @@ It runs `docker compose --profile tunnel up -d --scale worker=N` on boot and
 `down` on stop. Manage with `systemctl status|restart|stop upscale`. Images must
 already be built (`docker compose build`); the unit doesn't build.
 
+### Firewall / exposure
+
+Nothing needs to be publicly reachable when you serve via the Cloudflare tunnel
+(it makes an outbound connection). The compose file is set up accordingly:
+
+- **redis** has no published port — reached only over the internal network.
+- **api** is bound to `127.0.0.1:8000` — local `curl`/benchmark work, but it's
+  not on any public interface.
+
+> **Docker bypasses UFW.** A port published on `0.0.0.0` (e.g. `8000:8000`)
+> punches through UFW via Docker's own iptables rules. The fix is not to publish
+> it — hence the `127.0.0.1:` bind above and no port on redis.
+
+With that, a minimal firewall only needs SSH:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH        # keep your SSH session alive!
+sudo ufw enable
+sudo ufw status verbose
+```
+
+Verify nothing else is listening publicly (should show only sshd on `0.0.0.0`,
+and `127.0.0.1:8000` for the API):
+
+```bash
+sudo ss -tlnp
+```
+
 ## Expose publicly with Cloudflare Tunnel
 
 Two optional `cloudflared` services are wired up behind Compose profiles, so
