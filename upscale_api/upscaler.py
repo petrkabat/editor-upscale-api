@@ -65,6 +65,16 @@ def _get_upscaler(model_key: str, settings_id: int) -> Any:
 _SETTINGS_BY_ID: dict[int, Settings] = {}
 
 
+def preload(settings: Settings, model: str) -> None:
+    """Build (and cache) the upscaler for `model` up front.
+
+    Loading the weights and initialising CUDA is the slow part of the first job;
+    calling this at worker startup means the first real request isn't cold.
+    """
+    _SETTINGS_BY_ID[id(settings)] = settings
+    _get_upscaler(model, id(settings))
+
+
 def upscale_image(
     input_path: Path, output_path: Path, *, model: str, scale: int, settings: Settings
 ) -> Path:

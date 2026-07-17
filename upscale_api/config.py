@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     tile_size: int = Field(default=0)
     download_timeout_seconds: int = Field(default=60)
     max_image_bytes: int = Field(default=50 * 1024 * 1024)
+    # Load the default model at worker startup so the first job isn't cold.
+    preload_model: bool = Field(default=True)
 
     # Cleanup
     # Delete the downloaded input image once a job finishes.

@@ -331,7 +331,8 @@ you've found the useful worker count for that GPU.
 > freshly scaled (cold) workers inflate the measured wall clock — you'd see a
 > count that jumps around. The sweep runs a warmup batch (default 3× the worker
 > count) before each timed run so every worker is warm. For a single run use
-> `--warmup N` on `benchmark.py`.
+> `--warmup N` on `benchmark.py`. In production, `PRELOAD_MODEL=true` (default)
+> loads the model at worker startup, so the first real request isn't cold.
 
 > Per-job latency in the output includes queue wait, so it grows with backlog —
 > use **throughput / effective per image** to judge parallelism, not latency.
@@ -367,8 +368,9 @@ All settings are environment variables (see `.env.example`). Key ones:
 | `OUTPUT_DIR` | `data/outputs` | Where results are written |
 | `WEIGHTS_DIR` | `data/weights` | Cached model weights |
 | `USE_GPU` | `true` | Use CUDA + fp16 in the worker |
-| `TILE_SIZE` | `0` | Tile size for low-VRAM inference (0 = off) |
+| `TILE_SIZE` | `0` | Tile size for low-VRAM / large images (0 = off) |
 | `MAX_IMAGE_BYTES` | `52428800` | Reject inputs larger than this |
+| `PRELOAD_MODEL` | `true` | Load the model at worker startup (avoids a slow first job) |
 | `DELETE_INPUT_AFTER` | `true` | Delete the downloaded input once a job finishes |
 | `RESULT_TTL_HOURS` | `24` | Auto-remove finished jobs + results after N hours (0 = keep forever) |
 | `PUBLIC_BASE_URL` | `` | Base URL so `result` is returned as an absolute URL |

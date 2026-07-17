@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,20 @@ async def startup(ctx: dict[str, Any]) -> None:
     await db.init()
     ctx["settings"] = settings
     ctx["db"] = db
+
+    # Warm the model so the first real job isn't a slow cold start.
+    if settings.preload_model:
+        try:
+            from .upscaler import preload
+
+            t0 = time.monotonic()
+            await asyncio.to_thread(preload, settings, settings.default_model)
+            logger.info(
+                "preloaded model %s in %.1fs",
+                settings.default_model, time.monotonic() - t0,
+            )
+        except Exception as exc:  # noqa: BLE001 - preload is best effort
+            logger.warning("model preload failed: %s", exc)
 
 
 class WorkerSettings:
