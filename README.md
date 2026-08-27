@@ -44,6 +44,35 @@ Authorization: Bearer <API_TOKEN>
 Missing/invalid token returns `401 Unauthorized`. Leave `API_TOKEN` empty to
 keep the API open.
 
+### `GET /api/health`
+
+No auth. Always `200` so uptime/tunnel checks see the API itself; look at
+`status` to tell whether jobs will actually get processed.
+
+```json
+{
+  "status": "ok",
+  "redis": true,
+  "workers": {
+    "alive": true,
+    "last_seen": "Aug-27 10:15:02",
+    "ongoing": 1,
+    "complete": 12,
+    "failed": 1,
+    "retried": 0
+  },
+  "queue": { "queued": 3, "processing": 1 }
+}
+```
+
+- `status` — `ok` when Redis is reachable and a worker heartbeat is fresh,
+  otherwise `degraded`.
+- `workers` — the arq heartbeat (`arq:queue:health-check`), refreshed every
+  30 s by every worker instance. `alive: false` means no worker has reported
+  in the last ~30 s. Workers share one key, so the counters are those of the
+  last worker that wrote, not a sum across instances.
+- `queue` — job counts from the database.
+
 ### `POST /api/upscale`
 
 Request:

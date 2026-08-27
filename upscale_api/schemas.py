@@ -67,3 +67,32 @@ class JobResponse(BaseModel):
     queue_position: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkerHealth(BaseModel):
+    """Latest heartbeat recorded by the arq workers in Redis."""
+
+    # True if a worker refreshed its heartbeat recently (~30s window).
+    alive: bool
+    last_seen: Optional[str] = None
+    ongoing: int = 0
+    complete: int = 0
+    failed: int = 0
+    retried: int = 0
+
+
+class QueueHealth(BaseModel):
+    """Job counts from the database."""
+
+    queued: int = 0
+    processing: int = 0
+
+
+class HealthResponse(BaseModel):
+    """Response body of GET /api/health."""
+
+    # "ok" when Redis is reachable and a worker is alive, else "degraded".
+    status: str
+    redis: bool
+    workers: WorkerHealth
+    queue: QueueHealth

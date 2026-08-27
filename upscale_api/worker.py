@@ -140,3 +140,6 @@ class WorkerSettings:
     redis_settings = redis_settings(get_settings())
     max_jobs = 1  # one GPU job at a time per worker instance
     job_timeout = 600
+    # Refresh the `arq:queue:health-check` key every 30s (arq default is 1h) so
+    # GET /api/health notices a dead worker within ~30s instead of an hour.
+    health_check_interval = 30

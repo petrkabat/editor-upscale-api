@@ -29,6 +29,8 @@ def fake_pool() -> AsyncMock:
     pool = AsyncMock()
     pool.enqueue_job = AsyncMock()
     pool.close = AsyncMock()
+    # No worker heartbeat by default; tests set a return value to simulate one.
+    pool.get = AsyncMock(return_value=None)
     return pool
 
 

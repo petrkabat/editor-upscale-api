@@ -14,12 +14,15 @@ from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
 from .db import Database, Job
-from .queue import create_redis_pool, enqueue_upscale
+from .queue import create_redis_pool, enqueue_upscale, read_worker_health
 from .schemas import (
+    HealthResponse,
     JobResponse,
     JobStatus,
+    QueueHealth,
     UpscaleAccepted,
     UpscaleRequest,
+    WorkerHealth,
 )
 from .urls import result_url
 
@@ -80,9 +83,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             updated_at=job.updated_at,
         )
 
-    @app.get("/api/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    @app.get("/api/health", response_model=HealthResponse)
+    async def health(request: Request, db: Database = Depends(get_db)) -> HealthResponse:
+        """Liveness of the API plus Redis reachability and worker heartbeat.
+
+        Always returns 200 so tunnel/uptime checks still see the API itself;
+        look at `status` / `workers.alive` to tell whether jobs will actually
+        get processed.
+        """
+        redis_ok = True
+        heartbeat = None
+        try:
+            heartbeat = await read_worker_health(request.app.state.redis_pool)
+        except Exception:  # noqa: BLE001 - health must never raise
+            redis_ok = False
+
+        workers = (
+            WorkerHealth(alive=True, **heartbeat)
+            if heartbeat
+            else WorkerHealth(alive=False)
+        )
+        counts = await db.count_by_status()
+        queue = QueueHealth(
+            queued=counts.get(JobStatus.queued.value, 0),
+            processing=counts.get(JobStatus.processing.value, 0),
+        )
+        return HealthResponse(
+            status="ok" if redis_ok and workers.alive else "degraded",
+            redis=redis_ok,
+            workers=workers,
+            queue=queue,
+        )
 
     @app.post(
         "/api/upscale",

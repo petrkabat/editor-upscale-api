@@ -12,10 +12,46 @@ from upscale_api.db import Database
 from upscale_api.schemas import JobStatus
 
 
-def test_health(client: TestClient) -> None:
+def test_health_degraded_without_worker(client: TestClient) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["redis"] is True
+    assert body["workers"]["alive"] is False
+    assert body["queue"] == {"queued": 0, "processing": 0}
+
+
+def test_health_reports_worker_heartbeat_and_queue(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    fake_pool.get.return_value = (
+        b"Aug-27 10:15:02 j_complete=12 j_failed=1 j_retried=0 j_ongoing=1 queued=3"
+    )
+    for _ in range(2):
+        client.post("/api/upscale", json={"image_url": "https://example.com/i.jpg"})
+
+    body = client.get("/api/health").json()
+    assert body["status"] == "ok"
+    assert body["workers"] == {
+        "alive": True,
+        "last_seen": "Aug-27 10:15:02",
+        "ongoing": 1,
+        "complete": 12,
+        "failed": 1,
+        "retried": 0,
+    }
+    assert body["queue"] == {"queued": 2, "processing": 0}
+
+
+def test_health_degraded_when_redis_down(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    fake_pool.get.side_effect = ConnectionError("redis down")
+    body = client.get("/api/health").json()
+    assert body["status"] == "degraded"
+    assert body["redis"] is False
+    assert body["workers"]["alive"] is False
 
 
 def test_upscale_creates_queued_job(

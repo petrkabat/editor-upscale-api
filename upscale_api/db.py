@@ -127,6 +127,15 @@ class Database:
                 row = await cur.fetchone()
         return int(row["n"])
 
+    async def count_by_status(self) -> dict[str, int]:
+        """Number of jobs per status (statuses with no jobs are omitted)."""
+        async with self.connect() as conn:
+            async with conn.execute(
+                "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
+            ) as cur:
+                rows = await cur.fetchall()
+        return {row["status"]: int(row["n"]) for row in rows}
+
     async def update_status(
         self,
         job_id: str,
