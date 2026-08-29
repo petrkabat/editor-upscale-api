@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -121,17 +123,110 @@ def test_get_job_returns_queued(client: TestClient) -> None:
     assert body["queue_position"] == 0
 
 
-def test_queue_position_counts_jobs_ahead(client: TestClient) -> None:
-    ids = [
-        client.post(
-            "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
-        ).json()["id"]
-        for _ in range(3)
-    ]
-    positions = [
-        client.get(f"/api/jobs/{jid}").json()["queue_position"] for jid in ids
-    ]
-    assert positions == [0, 1, 2]
+def test_queue_position_comes_from_live_queue(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    job_id = client.post(
+        "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
+    ).json()["id"]
+
+    fake_pool.zrank.return_value = 5
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["queue_position"] == 5
+    fake_pool.zrank.assert_awaited_with("arq:queue", job_id)
+
+
+def test_queue_position_null_when_job_not_in_queue(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    """A row still 'queued' in the DB but gone from Redis (lost) has no position."""
+    job_id = client.post(
+        "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
+    ).json()["id"]
+
+    fake_pool.zrank.return_value = None
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["status"] == "queued"
+    assert body["queue_position"] is None
+
+
+def test_queue_position_null_when_redis_down(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    job_id = client.post(
+        "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
+    ).json()["id"]
+
+    fake_pool.zrank.side_effect = ConnectionError("redis down")
+    resp = client.get(f"/api/jobs/{job_id}")
+    assert resp.status_code == 200
+    assert resp.json()["queue_position"] is None
+
+
+def _backdate(settings: Settings, job_id: str, *, seconds: int) -> None:
+    ts = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    conn = sqlite3.connect(str(settings.database_path))
+    conn.execute("UPDATE jobs SET updated_at = ? WHERE id = ?", (ts, job_id))
+    conn.commit()
+    conn.close()
+
+
+def _create(client: TestClient) -> str:
+    return client.post(
+        "/api/upscale", json={"image_url": "https://example.com/image.jpg"}
+    ).json()["id"]
+
+
+def test_lost_queued_job_is_marked_failed(
+    client: TestClient, fake_pool: AsyncMock, settings: Settings
+) -> None:
+    job_id = _create(client)
+    _backdate(settings, job_id, seconds=120)
+    fake_pool.zscore.return_value = None  # arq no longer holds it
+
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["status"] == "failed"
+    assert "lost from queue" in body["error"]
+    assert body["queue_position"] is None
+
+
+def test_lost_processing_job_is_marked_failed(
+    client: TestClient, fake_pool: AsyncMock, settings: Settings
+) -> None:
+    job_id = _create(client)
+    conn = sqlite3.connect(str(settings.database_path))
+    conn.execute("UPDATE jobs SET status = 'processing' WHERE id = ?", (job_id,))
+    conn.commit()
+    conn.close()
+    _backdate(settings, job_id, seconds=120)
+    fake_pool.zscore.return_value = None
+
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["status"] == "failed"
+    assert "lost from queue" in body["error"]
+
+
+def test_fresh_job_not_in_redis_yet_stays_queued(
+    client: TestClient, fake_pool: AsyncMock
+) -> None:
+    """Within the grace period a missing queue entry is not treated as lost."""
+    job_id = _create(client)
+    fake_pool.zscore.return_value = None
+
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["status"] == "queued"
+
+
+def test_old_job_still_in_queue_stays_queued(
+    client: TestClient, fake_pool: AsyncMock, settings: Settings
+) -> None:
+    job_id = _create(client)
+    _backdate(settings, job_id, seconds=3600)
+    fake_pool.zrank.return_value = 2
+
+    body = client.get(f"/api/jobs/{job_id}").json()
+    assert body["status"] == "queued"
+    assert body["queue_position"] == 2
 
 
 def test_get_job_not_found(client: TestClient) -> None:

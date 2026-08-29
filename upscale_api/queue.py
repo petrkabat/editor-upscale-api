@@ -34,6 +34,24 @@ async def enqueue_upscale(pool: ArqRedis, job_id: str) -> None:
     await pool.enqueue_job(UPSCALE_TASK, job_id, _job_id=job_id)
 
 
+async def in_queue(pool: ArqRedis, job_id: str) -> bool:
+    """True while arq still holds `job_id` (waiting or being processed)."""
+    return await pool.zscore(default_queue_name, job_id) is not None
+
+
+async def queue_position(pool: ArqRedis, job_id: str) -> Optional[int]:
+    """Number of jobs ahead of `job_id` in the live arq queue (0 = next).
+
+    arq keeps jobs in a sorted set scored by enqueue time and removes them when
+    they finish, so this reflects only jobs that are really waiting or being
+    processed right now. Returns None when the job is no longer in the queue
+    (finished, expired, or lost) - unlike a DB-based count, stale rows can't
+    inflate the number.
+    """
+    rank = await pool.zrank(default_queue_name, job_id)
+    return int(rank) if rank is not None else None
+
+
 # Key under which arq workers periodically record their health. Every worker
 # instance writes the same key, so it tells "is at least one worker alive",
 # not how many there are.

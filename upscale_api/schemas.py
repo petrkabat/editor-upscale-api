@@ -63,7 +63,8 @@ class JobResponse(BaseModel):
     image_url: str
     result: Optional[str] = None
     error: Optional[str] = None
-    # Jobs ahead in the queue (only while status == "queued"; 0 = next up).
+    # Jobs ahead in the live Redis queue (0 = next up). Only while status ==
+    # "queued"; null if the job is no longer in the queue (e.g. lost).
     queue_position: Optional[int] = None
     created_at: datetime
     updated_at: datetime

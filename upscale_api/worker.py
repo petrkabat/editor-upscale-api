@@ -15,6 +15,7 @@ from arq import cron
 from .config import Settings, get_settings
 from .db import Database
 from .queue import redis_settings
+from .reconcile import reconcile_stale_jobs
 from .schemas import JobStatus
 
 logger = logging.getLogger("upscale_api.worker")
@@ -77,13 +78,19 @@ async def run_upscale(ctx: dict[str, Any], job_id: str) -> str:
 
 
 async def cleanup_old_results(ctx: dict[str, Any]) -> int:
-    """Cron task: remove finished jobs (rows + result files) past the TTL.
+    """Cron task: mark lost jobs failed, then remove finished jobs past the TTL.
 
     Coordinated by arq across worker instances, so it runs once per tick.
     Returns the number of jobs removed.
     """
     db: Database = ctx["db"]
     settings: Settings = ctx["settings"]
+
+    # Rows stuck in queued/processing whose queue entry is gone.
+    lost = await reconcile_stale_jobs(db, ctx["redis"])
+    if lost:
+        logger.warning("cleanup marked %d lost job(s) as failed", lost)
+
     if settings.result_ttl_hours <= 0:
         return 0
 

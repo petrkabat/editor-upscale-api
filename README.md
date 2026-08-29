@@ -114,8 +114,17 @@ Response (`202 Accepted`):
 
 `status` is one of `queued`, `processing`, `succeeded`, `failed`.
 `result` is populated only when the job has succeeded.
-`queue_position` is the number of jobs ahead in the queue (`0` = next); it is
-only present while `status == "queued"`, otherwise `null`.
+`queue_position` is the number of jobs ahead in the live Redis queue (`0` =
+next), i.e. jobs that are really waiting or being processed right now. It is
+only present while `status == "queued"`; it is `null` otherwise, and also if
+the job is no longer in the queue (e.g. it was lost when a worker died).
+
+**Lost jobs.** A job that is still `queued`/`processing` in the database but no
+longer held by the Redis queue (worker died mid-job, arq timeout, expired
+entry) is flipped to `failed` with `error: "lost from queue (...)"` — either
+when it is next polled or by the hourly cleanup — so clients never poll
+forever. Jobs younger than 60 s are exempt (the row is written before the
+enqueue).
 
 ### `GET /api/jobs/{id}/result`
 

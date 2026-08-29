@@ -31,6 +31,10 @@ def fake_pool() -> AsyncMock:
     pool.close = AsyncMock()
     # No worker heartbeat by default; tests set a return value to simulate one.
     pool.get = AsyncMock(return_value=None)
+    # Live queue rank; tests override to simulate jobs ahead / a lost job.
+    pool.zrank = AsyncMock(return_value=0)
+    # Queue membership; None simulates a job arq no longer holds (lost).
+    pool.zscore = AsyncMock(return_value=1.0)
     return pool
 
 

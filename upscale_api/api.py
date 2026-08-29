@@ -14,7 +14,13 @@ from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
 from .db import Database, Job
-from .queue import create_redis_pool, enqueue_upscale, read_worker_health
+from .queue import (
+    create_redis_pool,
+    enqueue_upscale,
+    queue_position,
+    read_worker_health,
+)
+from .reconcile import reconcile_job
 from .schemas import (
     HealthResponse,
     JobResponse,
@@ -142,16 +148,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     async def get_job(
-        job_id: str, db: Database = Depends(get_db)
+        job_id: str, request: Request, db: Database = Depends(get_db)
     ) -> JobResponse:
         job = await db.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
-        position = (
-            await db.count_ahead(job)
-            if job.status == JobStatus.queued.value
-            else None
-        )
+
+        pool = request.app.state.redis_pool
+        position = None
+        try:
+            # A row still queued/processing but absent from Redis was lost
+            # (worker died / timed out); flip it to failed so clients stop
+            # polling. Position comes from the live queue, not the DB.
+            job = await reconcile_job(db, pool, job)
+            if job.status == JobStatus.queued.value:
+                position = await queue_position(pool, job.id)
+        except Exception:  # noqa: BLE001 - Redis is best effort here
+            position = None
         return to_response(job, queue_position=position)
 
     @app.get("/api/jobs/{job_id}/result", dependencies=[Depends(require_auth)])

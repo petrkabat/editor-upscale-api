@@ -110,23 +110,6 @@ class Database:
                 row = await cur.fetchone()
         return _row_to_job(row) if row else None
 
-    async def count_ahead(self, job: Job) -> int:
-        """Number of unfinished jobs queued/processing before `job` (FIFO)."""
-        async with self.connect() as conn:
-            async with conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM jobs
-                WHERE status IN (?, ?) AND created_at < ?
-                """,
-                (
-                    JobStatus.queued.value,
-                    JobStatus.processing.value,
-                    job.created_at.isoformat(),
-                ),
-            ) as cur:
-                row = await cur.fetchone()
-        return int(row["n"])
-
     async def count_by_status(self) -> dict[str, int]:
         """Number of jobs per status (statuses with no jobs are omitted)."""
         async with self.connect() as conn:
@@ -157,6 +140,24 @@ class Database:
                 (status.value, result_path, error, _now(), job_id),
             )
             await conn.commit()
+
+    async def list_unfinished_before(self, cutoff: datetime) -> list[Job]:
+        """Jobs still queued/processing whose last update is before `cutoff`."""
+        async with self.connect() as conn:
+            async with conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status IN (?, ?) AND updated_at < ?
+                ORDER BY created_at
+                """,
+                (
+                    JobStatus.queued.value,
+                    JobStatus.processing.value,
+                    cutoff.isoformat(),
+                ),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [_row_to_job(row) for row in rows]
 
     async def delete_finished_before(self, cutoff: datetime) -> list[Job]:
         """Delete finished (succeeded/failed) jobs updated before `cutoff`.
